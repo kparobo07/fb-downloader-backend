@@ -12,10 +12,11 @@ def get_video():
     if not video_url:
         return jsonify({"error": "No URL provided"}), 400
 
-    print(f"Analyzing Universal Link: {video_url}")
+    print(f"Analyzing Link: {video_url}")
 
-    # Check if the link is from Facebook
+    # Identify where the link came from
     is_facebook = 'facebook.com' in video_url or 'fb.watch' in video_url or 'fb.gg' in video_url
+    is_instagram = 'instagram.com' in video_url
 
     ydl_opts = {
         'quiet': True,
@@ -28,44 +29,31 @@ def get_video():
             formats = info.get('formats', [])
             
             video_options = []
-            audio_options = []
-            added_qualities = set()
 
             for f in formats:
                 format_id = f.get('format_id', '').lower()
                 ext = f.get('ext', '')
-                vcodec = f.get('vcodec')
-                acodec = f.get('acodec')
-                height = f.get('height')
 
-                # 1. Grab Audio Only
-                if vcodec == 'none' and acodec != 'none':
-                    audio_options.append({"quality": "Audio Only", "url": f.get('url')})
-                
-                # 2. FACEBOOK ROUTE: Grab 'sd' and 'hd' only
+                # 1. THE FACEBOOK RULE
                 if is_facebook:
                     if format_id in ['sd', 'hd']:
                         quality_name = "HD Quality" if format_id == 'hd' else "Standard Quality"
                         video_options.append({"quality": quality_name, "url": f.get('url')})
                 
-                # 3. UNIVERSAL ROUTE (TikTok, IG, X): Grab any mp4 with both audio & video
-                else:
-                    if vcodec != 'none' and acodec != 'none' and ext == 'mp4':
-                        if height and height not in added_qualities:
-                            video_options.append({"quality": f"{height}p", "url": f.get('url')})
-                            added_qualities.add(height)
+                # 2. THE INSTAGRAM RULE
+                elif is_instagram:
+                    if ext == 'mp4':
+                        # Instagram videos are pre-mixed, so any mp4 works
+                        video_options.append({"quality": "Instagram Video", "url": f.get('url')})
 
-            # Sort Universal videos highest to lowest quality
-            if not is_facebook:
-                video_options.sort(key=lambda x: int(x['quality'].replace('p','')), reverse=True)
-
-            if len(audio_options) > 0:
-                audio_options = [audio_options[-1]]
+            # Clean up Instagram duplicates (we just want to offer the best one)
+            if is_instagram and len(video_options) > 0:
+                video_options = [video_options[-1]]
 
             return jsonify({
-                "title": info.get('title'),
+                "title": info.get('title', 'Video'),
                 "videos": video_options,
-                "audios": audio_options
+                "audios": [] # Skipping separate audio for IG to keep it simple
             })
 
     except Exception as e:
@@ -74,3 +62,4 @@ def get_video():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
