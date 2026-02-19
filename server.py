@@ -1,6 +1,7 @@
+import os
 from flask import Flask, request, jsonify
 import yt_dlp
-import os
+
 app = Flask(__name__)
 
 @app.route('/get_video', methods=['POST'])
@@ -11,7 +12,10 @@ def get_video():
     if not video_url:
         return jsonify({"error": "No URL provided"}), 400
 
-    print(f"Analyzing: {video_url}")
+    print(f"Analyzing Universal Link: {video_url}")
+
+    # Check if the link is from Facebook
+    is_facebook = 'facebook.com' in video_url or 'fb.watch' in video_url or 'fb.gg' in video_url
 
     ydl_opts = {
         'quiet': True,
@@ -25,26 +29,36 @@ def get_video():
             
             video_options = []
             audio_options = []
+            added_qualities = set()
 
             for f in formats:
                 format_id = f.get('format_id', '').lower()
+                ext = f.get('ext', '')
+                vcodec = f.get('vcodec')
+                acodec = f.get('acodec')
+                height = f.get('height')
 
-                # 1. Catch Audio Only files
-                if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
-                    audio_options.append({
-                        "quality": "Audio Only",
-                        "url": f.get('url')
-                    })
+                # 1. Grab Audio Only
+                if vcodec == 'none' and acodec != 'none':
+                    audio_options.append({"quality": "Audio Only", "url": f.get('url')})
                 
-                # 2. BULLETPROOF FACEBOOK CHECK: Only grab the pre-mixed 'sd' and 'hd' files
-                elif format_id in ['sd', 'hd']:
-                    quality_name = "HD Quality" if format_id == 'hd' else "Standard Quality"
-                    video_options.append({
-                        "quality": quality_name,
-                        "url": f.get('url')
-                    })
+                # 2. FACEBOOK ROUTE: Grab 'sd' and 'hd' only
+                if is_facebook:
+                    if format_id in ['sd', 'hd']:
+                        quality_name = "HD Quality" if format_id == 'hd' else "Standard Quality"
+                        video_options.append({"quality": quality_name, "url": f.get('url')})
+                
+                # 3. UNIVERSAL ROUTE (TikTok, IG, X): Grab any mp4 with both audio & video
+                else:
+                    if vcodec != 'none' and acodec != 'none' and ext == 'mp4':
+                        if height and height not in added_qualities:
+                            video_options.append({"quality": f"{height}p", "url": f.get('url')})
+                            added_qualities.add(height)
 
-            # Clean up the audio list to just show one good audio track
+            # Sort Universal videos highest to lowest quality
+            if not is_facebook:
+                video_options.sort(key=lambda x: int(x['quality'].replace('p','')), reverse=True)
+
             if len(audio_options) > 0:
                 audio_options = [audio_options[-1]]
 
@@ -57,11 +71,6 @@ def get_video():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-import os
-
-# ... (Keep all your other yt-dlp code exactly the same) ...
-
 if __name__ == '__main__':
-    # Cloud servers assign a random port, this catches it
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
